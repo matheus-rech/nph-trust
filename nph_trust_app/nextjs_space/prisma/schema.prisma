@@ -1,0 +1,746 @@
+generator client {
+    provider = "prisma-client-js"
+    binaryTargets = ["native", "linux-musl-arm64-openssl-3.0.x"]
+    output = "/home/ubuntu/nph_trust_app/nextjs_space/node_modules/.prisma/client"
+}
+
+datasource db {
+    provider = "postgresql"
+    url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  RESEARCHER
+  COORDINATOR
+  AUDITOR
+}
+
+enum ProjectStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  COMPLETED
+  ARCHIVED
+}
+
+enum PathwayStageType {
+  SYMPTOM_SCREENING
+  IMAGING
+  SPECIALIST_REVIEW
+  CSF_TESTING
+  TREATMENT_DECISION
+  SHUNT_INTERVENTION
+  FOLLOW_UP
+}
+
+enum PathwayEventStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  SKIPPED
+  CANCELLED
+  FAILED
+}
+
+enum FHIRResourceType {
+  QUESTIONNAIRE_RESPONSE
+  OBSERVATION
+  SERVICE_REQUEST
+  CARE_PLAN
+  DOCUMENT_REFERENCE
+}
+
+enum ImportStatus {
+  PENDING
+  VALIDATING
+  VALIDATED
+  IMPORTING
+  COMPLETED
+  FAILED
+  PARTIALLY_COMPLETED
+}
+
+enum ImportSourceType {
+  CSV
+  XLSX
+  JSON
+  FHIR_BUNDLE
+  MANUAL
+}
+
+enum AttestationStatus {
+  DRAFT
+  HASHED
+  SIGNED
+  ANCHOR_PENDING
+  ANCHORED
+  FAILED
+  REVERIFIED
+}
+
+enum SignatureAlgorithm {
+  HMAC_SHA256_v1
+  ECDSA_SECP256K1_v1
+}
+
+enum ProvenanceNodeType {
+  INPUT
+  EVENT
+  TRANSFORM
+  OUTPUT
+  ATTESTATION
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  WITHDRAWN
+}
+
+enum ApprovalTargetType {
+  CHECKPOINT
+  OUTPUT_ARTIFACT
+  PATHWAY_EVENT
+  ATTESTATION
+}
+
+enum ArtifactStatus {
+  PENDING
+  PROCESSING
+  READY
+  ERROR
+  ARCHIVED
+}
+
+enum FundingProgramStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+enum FundingClaimStatus {
+  ELIGIBLE
+  PENDING_SUBMIT
+  SUBMITTED
+  CONFIRMED
+  FAILED
+  REJECTED
+  MOCK_APPROVED
+  DUPLICATE
+}
+
+enum PayoutAttemptStatus {
+  PENDING
+  SUBMITTED
+  CONFIRMED
+  FAILED
+  REVERTED
+}
+
+enum FundingMilestoneType {
+  SCREENING_COMPLETED
+  IMAGING_COMPLETED
+  SPECIALIST_REVIEW_COMPLETED
+  CSF_TEST_COMPLETED
+  SHUNT_PERFORMED
+  FOLLOWUP_3M_COMPLETED
+  VALIDATED_IMPROVEMENT_RECORDED
+}
+
+enum LockTargetType {
+  PROJECT
+  PATIENT_EPISODE
+  PATHWAY_EVENT
+  OUTPUT_ARTIFACT
+  CHECKPOINT
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  passwordHash  String    @map("password_hash")
+  displayName   String    @map("display_name")
+  role          Role      @default(RESEARCHER)
+  isActive      Boolean   @default(true) @map("is_active")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  projectMembers    ProjectMember[]
+  approvals         Approval[]
+  locksHeld         Lock[]
+  auditEntries      AuditEntry[]       @relation("AuditActor")
+  importJobs        ImportJob[]
+  attestations      Attestation[]      @relation("AttestationCreator")
+  checkpoints       Checkpoint[]       @relation("CheckpointCreator")
+  fundingPrograms   FundingProgram[]   @relation("FundingProgramCreator")
+  verifiedClaims    FundingClaim[]     @relation("ClaimVerifier")
+
+  @@map("users")
+}
+
+model Project {
+  id            String        @id @default(cuid())
+  name          String
+  description   String?
+  status        ProjectStatus @default(DRAFT)
+  metadata      Json?
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+
+  sites             Site[]
+  members           ProjectMember[]
+  patientEpisodes   PatientEpisode[]
+  inputArtifacts    InputArtifact[]
+  outputArtifacts   OutputArtifact[]
+  attestations      Attestation[]
+  checkpoints       Checkpoint[]
+  importJobs        ImportJob[]
+  runLogs           RunLog[]
+  lineageEntries    LineageEntry[]
+  provenanceNodes   ProvenanceNode[]
+  fundingPrograms   FundingProgram[]
+  fundingClaims     FundingClaim[]
+
+  @@map("projects")
+}
+
+model Site {
+  id            String   @id @default(cuid())
+  projectId     String   @map("project_id")
+  name          String
+  identifier    String
+  metadata      Json?
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  project         Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  patientEpisodes PatientEpisode[]
+
+  @@unique([projectId, identifier])
+  @@map("sites")
+}
+
+model ProjectMember {
+  id        String   @id @default(cuid())
+  projectId String   @map("project_id")
+  userId    String   @map("user_id")
+  role      Role
+  joinedAt  DateTime @default(now()) @map("joined_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+  @@map("project_members")
+}
+
+model PatientEpisode {
+  id              String   @id @default(cuid())
+  projectId       String   @map("project_id")
+  siteId          String?  @map("site_id")
+  pseudoId        String   @map("pseudo_id")
+  metadata        Json?
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  project       Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  site          Site?          @relation(fields: [siteId], references: [id])
+  pathwayEvents PathwayEvent[]
+  fhirResources FHIRResource[]
+
+  @@unique([projectId, pseudoId])
+  @@index([projectId])
+  @@map("patient_episodes")
+}
+
+model PathwayStageDefinition {
+  id          String           @id @default(cuid())
+  stageType   PathwayStageType @unique @map("stage_type")
+  name        String
+  description String?
+  sortOrder   Int              @map("sort_order")
+  metadata    Json?
+
+  events PathwayEvent[]
+
+  @@map("pathway_stage_definitions")
+}
+
+model PathwayEvent {
+  id                  String             @id @default(cuid())
+  patientEpisodeId    String             @map("patient_episode_id")
+  stageDefinitionId   String             @map("stage_definition_id")
+  status              PathwayEventStatus @default(PENDING)
+  occurredAt          DateTime?          @map("occurred_at")
+  completedAt         DateTime?          @map("completed_at")
+  performedBy         String?            @map("performed_by")
+  notes               String?
+  data                Json?
+  metadata            Json?
+  createdAt           DateTime           @default(now()) @map("created_at")
+  updatedAt           DateTime           @updatedAt @map("updated_at")
+
+  patientEpisode  PatientEpisode       @relation(fields: [patientEpisodeId], references: [id], onDelete: Cascade)
+  stageDefinition PathwayStageDefinition @relation(fields: [stageDefinitionId], references: [id])
+  attestations    Attestation[]        @relation("PathwayEventAttestations")
+  fhirResources   FHIRResource[]
+
+  @@index([patientEpisodeId])
+  @@index([stageDefinitionId])
+  @@map("pathway_events")
+}
+
+model FHIRResource {
+  id                String           @id @default(cuid())
+  resourceType      FHIRResourceType @map("resource_type")
+  patientEpisodeId  String           @map("patient_episode_id")
+  pathwayEventId    String?          @map("pathway_event_id")
+  resourceId        String           @map("resource_id")
+  data              Json
+  version           Int              @default(1)
+  isActive          Boolean          @default(true) @map("is_active")
+  createdAt         DateTime         @default(now()) @map("created_at")
+  updatedAt         DateTime         @updatedAt @map("updated_at")
+
+  patientEpisode PatientEpisode @relation(fields: [patientEpisodeId], references: [id], onDelete: Cascade)
+  pathwayEvent   PathwayEvent?  @relation(fields: [pathwayEventId], references: [id])
+
+  @@unique([resourceType, resourceId, version])
+  @@index([patientEpisodeId])
+  @@index([resourceType])
+  @@map("fhir_resources")
+}
+
+model InputArtifact {
+  id              String         @id @default(cuid())
+  projectId       String         @map("project_id")
+  filename        String
+  mimeType        String         @map("mime_type")
+  sizeBytes       Int            @map("size_bytes")
+  storagePath     String         @map("storage_path")
+  sha256Hash      String         @map("sha256_hash")
+  sourceType      ImportSourceType @map("source_type")
+  metadata        Json?
+  status          ArtifactStatus @default(PENDING)
+  uploadedAt      DateTime       @default(now()) @map("uploaded_at")
+  createdAt       DateTime       @default(now()) @map("created_at")
+
+  project        Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  importJobs     ImportJob[]
+
+  @@index([projectId])
+  @@map("input_artifacts")
+}
+
+model ImportJob {
+  id              String       @id @default(cuid())
+  projectId       String       @map("project_id")
+  inputArtifactId String       @map("input_artifact_id")
+  initiatedById   String       @map("initiated_by_id")
+  status          ImportStatus @default(PENDING)
+  sourceType      ImportSourceType @map("source_type")
+  totalRows       Int?         @map("total_rows")
+  processedRows   Int?         @default(0) @map("processed_rows")
+  errorRows       Int?         @default(0) @map("error_rows")
+  errors          Json?
+  previewData     Json?        @map("preview_data")
+  startedAt       DateTime?    @map("started_at")
+  completedAt     DateTime?    @map("completed_at")
+  createdAt       DateTime     @default(now()) @map("created_at")
+
+  project       Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  inputArtifact InputArtifact @relation(fields: [inputArtifactId], references: [id])
+  initiatedBy   User          @relation(fields: [initiatedById], references: [id])
+
+  @@index([projectId])
+  @@map("import_jobs")
+}
+
+model Attestation {
+  id                    String             @id @default(cuid())
+  projectId             String             @map("project_id")
+  pathwayEventId        String?            @map("pathway_event_id")
+  createdById           String             @map("created_by_id")
+
+  // Event classification
+  eventType             String             @default("pathway_event_completed") @map("event_type")
+  subjectType           String             @map("subject_type")
+  subjectId             String             @map("subject_id")
+
+  // Payload & hash
+  payloadCanonical      String             @map("payload_canonical") @db.Text
+  canonicalPayloadRef   String?            @map("canonical_payload_ref")
+  payloadHash           String             @map("payload_hash")
+
+  // Signature
+  algorithmVersion      String             @default("HMAC_SHA256_v1") @map("algorithm_version")
+  signatureAlgo         SignatureAlgorithm @default(HMAC_SHA256_v1) @map("signature_algo")
+  signature             String?
+  signerId              String?            @map("signer_id")
+
+  // Lifecycle
+  status                AttestationStatus  @default(DRAFT)
+
+  // Blockchain anchor (optional)
+  anchorChainId         String?            @map("anchor_chain_id")
+  anchorTxHash          String?            @map("anchor_tx_hash")
+  anchorBlockNumber     Int?               @map("anchor_block_number")
+  anchorTimestamp       DateTime?          @map("anchor_timestamp")
+  anchorContractAddr    String?            @map("anchor_contract_addr")
+  anchorError           String?            @map("anchor_error")
+  anchorRetryCount      Int                @default(0) @map("anchor_retry_count")
+
+  // Verification
+  lastVerifiedAt        DateTime?          @map("last_verified_at")
+  verificationNote      String?            @map("verification_note")
+
+  // Source artifact binding — attestation MUST reference its sources
+  sourceArtifactIds     String[]           @default([]) @map("source_artifact_ids")
+
+  // Provenance binding — links attestation to its graph node
+  provenanceNodeId      String?            @unique @map("provenance_node_id")
+
+  // Idempotency: unique hash per project+eventType to prevent duplicates
+  idempotencyKey        String?            @unique @map("idempotency_key")
+
+  createdAt             DateTime           @default(now()) @map("created_at")
+  updatedAt             DateTime           @updatedAt @map("updated_at")
+
+  project         Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  pathwayEvent    PathwayEvent?        @relation("PathwayEventAttestations", fields: [pathwayEventId], references: [id])
+  createdBy       User                 @relation("AttestationCreator", fields: [createdById], references: [id])
+  provenanceNode  ProvenanceNode?      @relation("AttestationOwnNode", fields: [provenanceNodeId], references: [id])
+  provenanceNodes ProvenanceNode[]     @relation("AttestationProvenance")
+  fundingClaims   FundingClaim[]
+
+  @@index([projectId])
+  @@index([payloadHash])
+  @@index([status])
+  @@index([eventType])
+  @@map("attestations")
+}
+
+model ProvenanceNode {
+  id              String             @id @default(cuid())
+  projectId       String             @map("project_id")
+  nodeType        ProvenanceNodeType @map("node_type")
+  label           String?
+  entityType      String             @map("entity_type")
+  entityId        String             @map("entity_id")
+  attestationId   String?            @map("attestation_id")
+  runLogId        String?            @map("run_log_id")
+  metadata        Json?
+  timestamp       DateTime           @default(now())
+  createdAt       DateTime           @default(now()) @map("created_at")
+
+  project          Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  attestation      Attestation?     @relation("AttestationProvenance", fields: [attestationId], references: [id])
+  ownedAttestation Attestation?     @relation("AttestationOwnNode")
+  runLog           RunLog?          @relation(fields: [runLogId], references: [id])
+  parentEdges      ProvenanceEdge[] @relation("EdgeTarget")
+  childEdges       ProvenanceEdge[] @relation("EdgeSource")
+
+  @@unique([projectId, entityType, entityId])
+  @@index([projectId])
+  @@index([entityType, entityId])
+  @@index([nodeType])
+  @@index([runLogId])
+  @@map("provenance_nodes")
+}
+
+model ProvenanceEdge {
+  id          String   @id @default(cuid())
+  sourceId    String   @map("source_id")
+  targetId    String   @map("target_id")
+  edgeType    String   @map("edge_type")
+  metadata    Json?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  source ProvenanceNode @relation("EdgeSource", fields: [sourceId], references: [id], onDelete: Cascade)
+  target ProvenanceNode @relation("EdgeTarget", fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@unique([sourceId, targetId, edgeType])
+  @@index([sourceId])
+  @@index([targetId])
+  @@map("provenance_edges")
+}
+
+model LineageEntry {
+  id                String   @id @default(cuid())
+  projectId         String   @map("project_id")
+  sourceType        String   @map("source_type")
+  sourceId          String   @map("source_id")
+  targetType        String   @map("target_type")
+  targetId          String   @map("target_id")
+  transformDesc     String?  @map("transform_desc")
+  metadata          Json?
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([sourceType, sourceId])
+  @@index([targetType, targetId])
+  @@index([projectId])
+  @@map("lineage_entries")
+}
+
+model RunLog {
+  id            String   @id @default(cuid())
+  projectId     String   @map("project_id")
+  action        String
+  status        String
+  inputSummary  Json?    @map("input_summary")
+  outputSummary Json?    @map("output_summary")
+  errorDetail   String?  @map("error_detail") @db.Text
+  durationMs    Int?     @map("duration_ms")
+  triggeredBy   String?  @map("triggered_by")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  project         Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  provenanceNodes ProvenanceNode[]
+
+  @@index([projectId])
+  @@index([action])
+  @@map("run_logs")
+}
+
+model OutputArtifact {
+  id            String         @id @default(cuid())
+  projectId     String         @map("project_id")
+  artifactType  String         @map("artifact_type")
+  filename      String
+  mimeType      String         @map("mime_type")
+  sizeBytes     Int?           @map("size_bytes")
+  storagePath   String         @map("storage_path")
+  sha256Hash    String         @map("sha256_hash")
+  status        ArtifactStatus @default(PENDING)
+  metadata      Json?
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+
+  project   Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@map("output_artifacts")
+}
+
+model Approval {
+  id              String             @id @default(cuid())
+  targetType      ApprovalTargetType @map("target_type")
+  targetId        String             @map("target_id")
+  requestedById   String?            @map("requested_by_id")
+  reviewedById    String?            @map("reviewed_by_id")
+  status          ApprovalStatus     @default(PENDING)
+  comment         String?            @db.Text
+  requestedAt     DateTime           @default(now()) @map("requested_at")
+  reviewedAt      DateTime?          @map("reviewed_at")
+
+  reviewedBy      User?           @relation(fields: [reviewedById], references: [id])
+
+  @@index([targetType, targetId])
+  @@index([status])
+  @@map("approvals")
+}
+
+model Lock {
+  id          String         @id @default(cuid())
+  targetType  LockTargetType @map("target_type")
+  targetId    String         @map("target_id")
+  heldById    String         @map("held_by_id")
+  reason      String?
+  acquiredAt  DateTime       @default(now()) @map("acquired_at")
+  expiresAt   DateTime?      @map("expires_at")
+
+  heldBy User @relation(fields: [heldById], references: [id])
+
+  @@unique([targetType, targetId])
+  @@map("locks")
+}
+
+model Checkpoint {
+  id            String   @id @default(cuid())
+  projectId     String   @map("project_id")
+  version       Int
+  label         String?
+  description   String?  @db.Text
+  createdById   String   @map("created_by_id")
+  snapshotData  Json     @map("snapshot_data")
+  sha256Hash    String   @map("sha256_hash")
+  parentId      String?  @map("parent_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  project   Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy User        @relation("CheckpointCreator", fields: [createdById], references: [id])
+  parent    Checkpoint? @relation("CheckpointChain", fields: [parentId], references: [id])
+  children  Checkpoint[] @relation("CheckpointChain")
+
+  @@unique([projectId, version])
+  @@index([projectId])
+  @@map("checkpoints")
+}
+
+model AuditEntry {
+  id          String   @id @default(cuid())
+  actorId     String?  @map("actor_id")
+  action      String
+  entityType  String   @map("entity_type")
+  entityId    String   @map("entity_id")
+  before      Json?
+  after       Json?
+  ipAddress   String?  @map("ip_address")
+  metadata    Json?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  actor User? @relation("AuditActor", fields: [actorId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([actorId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_entries")
+}
+
+// ============================================================
+// OUTCOME-BASED FUNDING LAYER
+// ============================================================
+
+model FundingProgram {
+  id                  String               @id @default(cuid())
+  projectId           String               @map("project_id")
+  name                String
+  description         String?              @db.Text
+  funderName          String               @map("funder_name")
+  status              FundingProgramStatus  @default(DRAFT)
+
+  // On-chain references (null if not deployed)
+  chainId             String?              @map("chain_id")
+  contractAddress     String?              @map("contract_address")
+  onChainProgramId    String?              @map("on_chain_program_id")
+  tokenAddress        String?              @map("token_address")
+  tokenSymbol         String?              @map("token_symbol")
+  tokenDecimals       Int                  @default(6) @map("token_decimals")
+
+  // Budget tracking (off-chain mirror)
+  totalBudget         Decimal              @default(0) @map("total_budget") @db.Decimal(18, 6)
+  totalDeposited      Decimal              @default(0) @map("total_deposited") @db.Decimal(18, 6)
+  totalPaidOut        Decimal              @default(0) @map("total_paid_out") @db.Decimal(18, 6)
+  budgetCurrency      String               @default("USDC") @map("budget_currency")
+
+  // Validity
+  validFrom           DateTime?            @map("valid_from")
+  validUntil          DateTime?            @map("valid_until")
+
+  createdById         String               @map("created_by_id")
+  createdAt           DateTime             @default(now()) @map("created_at")
+  updatedAt           DateTime             @updatedAt @map("updated_at")
+
+  project             Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy           User                 @relation("FundingProgramCreator", fields: [createdById], references: [id])
+  milestoneConfigs    FundingMilestoneConfig[]
+  claims              FundingClaim[]
+
+  @@index([projectId])
+  @@index([status])
+  @@map("funding_programs")
+}
+
+model FundingMilestoneConfig {
+  id                  String               @id @default(cuid())
+  programId           String               @map("program_id")
+  milestoneType       FundingMilestoneType @map("milestone_type")
+  label               String
+  amount              Decimal              @map("amount") @db.Decimal(18, 6)
+  enabled             Boolean              @default(true)
+
+  // Mapping rules (which stageType + status triggers this milestone)
+  stageType           String               @map("stage_type")
+  requiredStatus      String               @default("COMPLETED") @map("required_status")
+  dataConditions      Json?                @map("data_conditions")
+
+  createdAt           DateTime             @default(now()) @map("created_at")
+  updatedAt           DateTime             @updatedAt @map("updated_at")
+
+  program             FundingProgram       @relation(fields: [programId], references: [id], onDelete: Cascade)
+
+  @@unique([programId, milestoneType])
+  @@index([programId])
+  @@map("funding_milestone_configs")
+}
+
+model FundingClaim {
+  id                  String               @id @default(cuid())
+  programId           String               @map("program_id")
+  projectId           String               @map("project_id")
+  episodeId           String               @map("episode_id")
+  siteId              String?              @map("site_id")
+  milestoneType       FundingMilestoneType @map("milestone_type")
+  status              FundingClaimStatus   @default(ELIGIBLE)
+
+  // Evidence binding
+  attestationId       String               @map("attestation_id")
+  attestationHash     String               @map("attestation_hash")
+  pathwayEventId      String               @map("pathway_event_id")
+  provenanceBinding   Json?                @map("provenance_binding")
+
+  // Payout details
+  amount              Decimal              @map("amount") @db.Decimal(18, 6)
+  currency            String               @default("USDC")
+  recipientAddress    String?              @map("recipient_address")
+
+  // On-chain references
+  onChainClaimId      String?              @map("on_chain_claim_id")
+  txHash              String?              @map("tx_hash")
+  blockNumber         Int?                 @map("block_number")
+
+  // Pseudo references for on-chain (hashed, not PHI)
+  episodePseudoRef    String               @map("episode_pseudo_ref")
+  sitePseudoRef       String?              @map("site_pseudo_ref")
+
+  verifiedById        String?              @map("verified_by_id")
+  verifiedAt          DateTime?            @map("verified_at")
+  paidAt              DateTime?            @map("paid_at")
+  createdAt           DateTime             @default(now()) @map("created_at")
+  updatedAt           DateTime             @updatedAt @map("updated_at")
+
+  program             FundingProgram       @relation(fields: [programId], references: [id], onDelete: Cascade)
+  project             Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  attestation         Attestation          @relation(fields: [attestationId], references: [id])
+  verifiedBy          User?                @relation("ClaimVerifier", fields: [verifiedById], references: [id])
+  payoutAttempts      PayoutAttempt[]
+
+  @@unique([programId, episodeId, milestoneType])
+  @@index([programId])
+  @@index([projectId])
+  @@index([status])
+  @@index([attestationHash])
+  @@map("funding_claims")
+}
+
+model PayoutAttempt {
+  id                  String               @id @default(cuid())
+  claimId             String               @map("claim_id")
+  attemptNumber       Int                  @default(1) @map("attempt_number")
+  status              PayoutAttemptStatus  @default(PENDING)
+
+  // Transaction details
+  txHash              String?              @map("tx_hash")
+  blockNumber         Int?                 @map("block_number")
+  gasUsed             Int?                 @map("gas_used")
+  errorDetail         String?              @map("error_detail") @db.Text
+  isMock              Boolean              @default(false) @map("is_mock")
+
+  submittedAt         DateTime?            @map("submitted_at")
+  confirmedAt         DateTime?            @map("confirmed_at")
+  createdAt           DateTime             @default(now()) @map("created_at")
+
+  claim               FundingClaim         @relation(fields: [claimId], references: [id], onDelete: Cascade)
+
+  @@index([claimId])
+  @@index([status])
+  @@map("payout_attempts")
+}
